@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jardín Botánico Digital Interactivo</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600&display=swap');
+        
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #05050a;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .glass-panel {
+            background: rgba(15, 15, 26, 0.65);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        /* Ocultar barra de desplazamiento */
+        ::-webkit-scrollbar {
+            display: none;
+        }
+    </style>
+</head>
+<body class="relative w-screen h-screen select-none text-white">
+
+    <!-- Canvas Principal de la Animación -->
+    <canvas id="gardenCanvas"></canvas>
+
+    <!-- UI Overlay (Interfaz Encimada) -->
+    <div class="absolute top-6 left-6 z-10 pointer-events-none">
+        <div class="glass-panel p-5 rounded-2xl max-w-sm pointer-events-auto transition-all duration-300 shadow-2xl">
+            <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-300 to-indigo-400 mb-1">
+                🌸 Jardín de Luz Neón
+            </h1>
+            <p class="text-xs text-gray-400 leading-relaxed mb-4">
+                Haz clic en cualquier parte de la pantalla para plantarle vida al jardín. Mueve el cursor para interactuar con la brisa y esparcir polen brillante.
+            </p>
+            
+            <div class="flex flex-wrap gap-2 mb-4">
+                <button id="btnClear" class="px-3 py-1.5 text-xs font-medium bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 rounded-xl transition-all">
+                    🧹 Limpiar Jardín
+                </button>
+                <button id="btnBloomAll" class="px-3 py-1.5 text-xs font-medium bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 border border-pink-500/20 rounded-xl transition-all">
+                    ✨ Floración Mágica
+                </button>
+                <button id="btnToggleNight" class="px-3 py-1.5 text-xs font-medium bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 rounded-xl transition-all">
+                    🌙 Cambiar Luz
+                </button>
+            </div>
+
+            <!-- Stats breves -->
+            <div class="flex justify-between items-center text-[10px] text-gray-500 border-t border-white/5 pt-3">
+                <span>Flores activas: <strong id="flowerCount" class="text-pink-400">0</strong></span>
+                <span>Polen en aire: <strong id="particleCount" class="text-indigo-400">0</strong></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Indicador Flotante de Instrucción Corta -->
+    <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none opacity-70 animate-pulse text-xs tracking-wider text-gray-400 glass-panel px-4 py-2 rounded-full border border-white/10">
+        ✨ Haz clic sobre la pantalla para hacer florecer nuevas ramas
+    </div>
+
+    <script>
+        /**
+         * ANIMATED NEON GARDEN ENGINE
+         * Genera flores procedimentales con simulación de crecimiento, pétalos interactivos y polen flotante.
+         */
+
+        const canvas = document.getElementById('gardenCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+
+        // Estado Global
+        let flowers = [];
+        let particles = [];
+        let floatingPetals = [];
+        let mouse = { x: width / 2, y: height / 2, active: false, speedX: 0, speedY: 0 };
+        let isNightMode = true;
+
+        // Paletas de Colores Elegantes (Gradientes de pétalos)
+        const COLOR_PALETTES = [
+            { main: '#ff4b91', secondary: '#ff76ce', core: '#ffe5ec', glow: 'rgba(255, 75, 145, 0.4)' }, // Neon Pink
+            { main: '#9d4edd', secondary: '#c77dff', core: '#e0aaff', glow: 'rgba(157, 78, 221, 0.4)' }, // Electric Violet
+            { main: '#00b4d8', secondary: '#90e0ef', core: '#caf0f8', glow: 'rgba(0, 180, 216, 0.4)' },  // Cyan Glow
+            { main: '#ff70a6', secondary: '#ff9770', core: '#ffd670', glow: 'rgba(255, 112, 166, 0.4)' }, // Sunset Coral
+            { main: '#70e000', secondary: '#ccff33', core: '#ffff33', glow: 'rgba(112, 224, 0, 0.4)' },   // Bio Lime
+            { main: '#f72585', secondary: '#b5179e', core: '#7209b7', glow: 'rgba(247, 37, 133, 0.4)' }   // Magenta Deep
+        ];
+
+        // Redimensionado Adaptativo
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        });
+
+        // Eventos de Mouse/Touch
+        window.addEventListener('mousemove', (e) => {
+            mouse.speedX = e.clientX - mouse.x;
+            mouse.speedY = e.clientY - mouse.y;
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+            mouse.active = true;
+
+            // Generar pequeñas partículas al mover el mouse
+            if (Math.random() < 0.3) {
+                createParticle(mouse.x, mouse.y, 'sparkle');
+            }
+        });
+
+        window.addEventListener('click', (e) => {
+            // Prevenir crear flores si se hace clic dentro del panel de UI
+            if (e.target.closest('.glass-panel')) return;
+            plantFlower(e.clientX, e.clientY);
+        });
+
+        // Touch Support
+        window.addEventListener('touchmove', (e) => {
+            if (e.touches.length > 0) {
+                mouse.x = e.touches[0].clientX;
+                mouse.y = e.touches[0].clientY;
+                mouse.active = true;
+                if (Math.random() < 0.3) createParticle(mouse.x, mouse.y, 'sparkle');
+            }
+        });
+
+        window.addEventListener('touchstart', (e) => {
+            if (e.touches.length > 0 && !e.target.closest('.glass-panel')) {
+                plantFlower(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        });
+
+        // ===== CLASE DE PARTÍCULAS (Polen y Brillos) =====
+        class Particle {
+            constructor(x, y, type = 'pollen') {
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                this.size = type === 'sparkle' ? Math.random() * 2 + 1 : Math.random() * 3 + 1;
+                this.speedX = (Math.random() - 0.5) * (type === 'sparkle' ? 2 : 0.8);
+                this.speedY = type === 'sparkle' ? (Math.random() - 0.5) * 2 : -Math.random() * 1.5 - 0.3;
+                this.alpha = 1;
+                this.decay = Math.random() * 0.015 + 0.005;
+                this.color = type === 'sparkle' 
+                    ? '#ffffff' 
+                    : `hsla(${Math.random() * 60 + 300}, 100%, 75%, `;
+            }
+
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                
+                // Efecto viento suave del mouse
+                if (mouse.active) {
+                    let dx = mouse.x - this.x;
+                    let dy = mouse.y - this.y;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 120) {
+                        this.x -= (dx / dist) * 1.5;
+                        this.y -= (dy / dist) * 1.5;
+                    }
+                }
+
+                this.alpha -= this.decay;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = Math.max(this.alpha, 0);
+                ctx.fillStyle = this.type === 'sparkle' ? this.color : this.color + this.alpha + ')';
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // ===== CLASE DE PÉTALOS FLOTANTES =====
+        class FloatingPetal {
+            constructor(x, y, palette) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 8 + 6;
+                this.palette = palette;
+                this.speedX = (Math.random() - 0.5) * 1.5;
+                this.speedY = Math.random() * 1 + 0.5;
+                this.rotation = Math.random() * Math.PI * 2;
+                this.rotSpeed = (Math.random() - 0.5) * 0.04;
+                this.oscillation = Math.random() * Math.PI * 2;
+                this.alpha = 1;
+            }
+
+            update() {
+                this.oscillation += 0.03;
+                this.x += this.speedX + Math.sin(this.oscillation) * 0.8;
+                this.y += this.speedY;
+                this.rotation += this.rotSpeed;
+
+                if (this.y > height + 20) {
+                    this.alpha = 0; // Marcar para eliminar al salir de la pantalla
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                ctx.globalAlpha = Math.max(this.alpha, 0);
+
+                ctx.fillStyle = this.palette.main;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.bezierCurveTo(-this.size, -this.size / 2, -this.size, this.size, 0, this.size * 1.5);
+                ctx.bezierCurveTo(this.size, this.size, this.size, -this.size / 2, 0, 0);
+                ctx.fill();
+
+                ctx.restore();
+            }
+        }
+
+        // ===== CLASE DE FLOR FLORECIENTE PROCEDIMENTAL =====
+        class Flower {
+            constructor(targetX, targetY) {
+                this.startX = targetX + (Math.random() - 0.5) * 30;
+                this.startY = height + 10;
+                this.targetX = targetX;
+                this.targetY = targetY;
+
+                this.growth = 0; // 0 a 1
+                this.growthSpeed = Math.random() * 0.012 + 0.008;
+
+                this.bloomProgress = 0; // 0 a 1 (inicia cuando termina el tallo)
+                this.palette = COLOR_PALETTES[Math.floor(Math.random() * COLOR_PALETTES.length)];
+                
+                this.petalCount = Math.floor(Math.random() * 5) + 5; // 5 a 10 pétalos
+                this.maxFlowerRadius = Math.random() * 25 + 25;
+                
+                // Curvatura del tallo (Bezier)
+                this.controlX = (this.startX + this.targetX) / 2 + (Math.random() - 0.5) * 100;
+                this.controlY = (this.startY + this.targetY) / 2 + (Math.random() - 0.5) * 50;
+
+                this.leaves = [
+                    { t: 0.35, side: -1, size: Math.random() * 15 + 10, bloom: 0 },
+                    { t: 0.65, side: 1, size: Math.random() * 18 + 12, bloom: 0 }
+                ];
+
+                this.isDoneGrowing = false;
+            }
+
+            update() {
+                if (this.growth < 1) {
+                    this.growth += this.growthSpeed;
+                    if (this.growth >= 1) this.growth = 1;
+                } else if (this.bloomProgress < 1) {
+                    this.bloomProgress += 0.02;
+                    if (this.bloomProgress >= 1) {
+                        this.bloomProgress = 1;
+                        this.isDoneGrowing = true;
+                    }
+
+                    // Liberar polen durante la apertura
+                    if (Math.random() < 0.4) {
+                        particles.push(new Particle(this.targetX, this.targetY, 'pollen'));
+                    }
+                }
+
+                // Desprender pétalos flotantes raramente cuando la flor esté desarrollada
+                if (this.isDoneGrowing && Math.random() < 0.002) {
+                    floatingPetals.push(new FloatingPetal(this.targetX, this.targetY, this.palette));
+                }
+            }
+
+            // Obtener coordenadas en la curva de Bézier según el porcentaje t (0 a 1)
+            getStemPoint(t) {
+                const invT = 1 - t;
+                const x = invT * invT * this.startX + 2 * invT * t * this.controlX + t * t * this.targetX;
+                const y = invT * invT * this.startY + 2 * invT * t * this.controlY + t * t * this.targetY;
+                return { x, y };
+            }
+
+            draw() {
+                // 1. DIBUJAR TALLO
+                ctx.save();
+                ctx.strokeStyle = '#2d6a4f';
+                ctx.lineWidth = Math.max(1, 6 * (1 - this.growth * 0.3));
+                ctx.lineCap = 'round';
+                ctx.shadowBlur = 4;
+                ctx.shadowColor = 'rgba(45, 106, 79, 0.5)';
+
+                ctx.beginPath();
+                const steps = 30;
+                const currentSteps = Math.floor(steps * this.growth);
+                
+                for (let i = 0; i <= currentSteps; i++) {
+                    let t = i / steps;
+                    let pt = this.getStemPoint(t);
+                    if (i === 0) ctx.moveTo(pt.x, pt.y);
+                    else ctx.lineTo(pt.x, pt.y);
+                }
+                ctx.stroke();
+                ctx.restore();
+
+                // 2. DIBUJAR HOJAS LATERALES
+                this.leaves.forEach(leaf => {
+                    if (this.growth > leaf.t) {
+                        leaf.bloom = Math.min(1, leaf.bloom + 0.05);
+                        let pt = this.getStemPoint(leaf.t);
+
+                        ctx.save();
+                        ctx.translate(pt.x, pt.y);
+                        ctx.fillStyle = '#40916c';
+                        ctx.shadowBlur = 6;
+                        ctx.shadowColor = 'rgba(64, 145, 108, 0.3)';
+
+                        let scale = leaf.bloom * leaf.size;
+                        ctx.beginPath();
+                        ctx.ellipse(
+                            leaf.side * scale * 0.5, 
+                            -scale * 0.2, 
+                            scale * 0.6, 
+                            scale * 0.25, 
+                            (leaf.side * Math.PI) / 6, 
+                            0, 
+                            Math.PI * 2
+                        );
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                });
+
+                // 3. DIBUJAR LA FLOR (PÉTALOS Y NÚCLEO)
+                if (this.bloomProgress > 0) {
+                    ctx.save();
+                    ctx.translate(this.targetX, this.targetY);
+
+                    const currentRadius = this.maxFlowerRadius * Math.sin((this.bloomProgress * Math.PI) / 2);
+                    
+                    // Efecto Glow / Resplandor
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = this.palette.glow;
+
+                    // Dibujar Pétalos
+                    for (let i = 0; i < this.petalCount; i++) {
+                        const angle = (i * Math.PI * 2) / this.petalCount;
+                        ctx.save();
+                        ctx.rotate(angle);
+
+                        // Gradiente radial por pétalo
+                        let grad = ctx.createLinearGradient(0, 0, 0, -currentRadius * 1.5);
+                        grad.addColorStop(0, this.palette.secondary);
+                        grad.addColorStop(0.8, this.palette.main);
+                        grad.addColorStop(1, '#ffffff');
+
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(0, 0);
+                        ctx.bezierCurveTo(
+                            -currentRadius * 0.5, -currentRadius * 0.7,
+                            -currentRadius * 0.3, -currentRadius * 1.4,
+                            0, -currentRadius * 1.5
+                        );
+                        ctx.bezierCurveTo(
+                            currentRadius * 0.3, -currentRadius * 1.4,
+                            currentRadius * 0.5, -currentRadius * 0.7,
+                            0, 0
+                        );
+                        ctx.fill();
+                        ctx.restore();
+                    }
+
+                    // Centro de la flor (Pistilo)
+                    ctx.beginPath();
+                    ctx.arc(0, 0, currentRadius * 0.3, 0, Math.PI * 2);
+                    ctx.fillStyle = this.palette.core;
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = '#ffffff';
+                    ctx.fill();
+
+                    // Brillo central adicional
+                    ctx.beginPath();
+                    ctx.arc(0, 0, currentRadius * 0.15, 0, Math.PI * 2);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fill();
+
+                    ctx.restore();
+                }
+            }
+        }
+
+        // ===== FUNCIONES AUXILIARES =====
+        function createParticle(x, y, type) {
+            if (particles.length < 250) {
+                particles.push(new Particle(x, y, type));
+            }
+        }
+
+        function plantFlower(x, y) {
+            flowers.push(new Flower(x, y));
+            // Estallido de partículas al plantar
+            for (let i = 0; i < 12; i++) {
+                createParticle(x, y, 'sparkle');
+            }
+            updateCounters();
+        }
+
+        function updateCounters() {
+            document.getElementById('flowerCount').innerText = flowers.length;
+            document.getElementById('particleCount').innerText = particles.length + floatingPetals.length;
+        }
+
+        // ===== BUCLE PRINCIPAL DE ANIMACIÓN =====
+        function animate() {
+            // Fondo con rastro para fluidez de brillo
+            ctx.fillStyle = isNightMode ? 'rgba(5, 5, 10, 0.25)' : 'rgba(20, 15, 30, 0.25)';
+            ctx.fillRect(0, 0, width, height);
+
+            // 1. Actualizar y dibujar flores
+            flowers.forEach(flower => {
+                flower.update();
+                flower.draw();
+            });
+
+            // 2. Actualizar y dibujar partículas (polen / brillos)
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.update();
+                p.draw();
+                if (p.alpha <= 0) particles.splice(i, 1);
+            }
+
+            // 3. Actualizar y dibujar pétalos caídos
+            for (let i = floatingPetals.length - 1; i >= 0; i--) {
+                const petal = floatingPetals[i];
+                petal.update();
+                petal.draw();
+                if (petal.alpha <= 0) floatingPetals.splice(i, 1);
+            }
+
+            updateCounters();
+            requestAnimationFrame(animate);
+        }
+
+        // ===== CONTROLES DE LA INTERFAZ =====
+        document.getElementById('btnClear').addEventListener('click', () => {
+            flowers = [];
+            particles = [];
+            floatingPetals = [];
+            updateCounters();
+        });
+
+        document.getElementById('btnBloomAll').addEventListener('click', () => {
+            for (let i = 0; i < 7; i++) {
+                setTimeout(() => {
+                    const randomX = Math.random() * (width - 100) + 50;
+                    const randomY = Math.random() * (height * 0.5) + height * 0.3;
+                    plantFlower(randomX, randomY);
+                }, i * 180);
+            }
+        });
+
+        document.getElementById('btnToggleNight').addEventListener('click', () => {
+            isNightMode = !isNightMode;
+        });
+
+        // Inicialización del Jardín al cargar la página
+        window.onload = () => {
+            // Flores iniciales de bienvenida
+            plantFlower(width * 0.3, height * 0.55);
+            plantFlower(width * 0.5, height * 0.45);
+            plantFlower(width * 0.7, height * 0.6);
+            
+            animate();
+        };
+    </script>
+</body>
+</html>
